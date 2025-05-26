@@ -18,7 +18,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 COLLECTIONS = {
     "dopedoges": {
         "api_url": "https://api.doggy.market/listings/nfts/dopedoges/orders",
-        "channel_id": yourchannelidhere,
+        "channel_id": 1355537264800829511,
         "color": 0xFF4500,  # Brighter orange for vibrancy
         "hashtag": "#DopeDogeVibes",
         "last_sale_timestamp_file": "last_dope_sale_timestamp.txt"
