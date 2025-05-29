@@ -5,74 +5,45 @@ from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 import aiohttp
 import random
-import asyncpg
 
 # Load environment variables
 load_dotenv()
 
 # Discord bot setup
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = True  # Enable message content intent
 bot = commands.Bot(command_prefix='!', intents=intents)
-
-# Database connection pool (global, created at startup)
-db_pool = None
-
-# Initialize database pool
-async def init_db_pool():
-    global db_pool
-    try:
-        db_pool = await asyncpg.create_pool(os.getenv("POSTGRES_URL"))
-        print("Database pool initialized successfully")
-    except Exception as e:
-        print(f"Error initializing database pool: {e}")
-        raise
 
 # Configuration for multiple collections
 COLLECTIONS = {
     "dopedoges": {
         "api_url": "https://api.doggy.market/listings/nfts/dopedoges/orders",
         "channel_id": 1355537264800829511,
-        "color": 0xFF4500,
+        "color": 0xFF4500,  # Brighter orange for vibrancy
         "hashtag": "#DopeDogeVibes",
+        "last_sale_timestamp_file": "last_dope_sale_timestamp.txt"
     },
     # "minidoges": {
     #     "api_url": "https://api.doggy.market/listings/nfts/minidoges/orders",
-    #     "channel_id": yourschannelidhere,
-    #     "color": 0x00CED1,
+    #     "channel_id": yourschannelidhere,  # Update this to the correct Mini Doges channel ID
+    #     "color": 0x00CED1,  # Brighter cyan for vibrancy
     #     "hashtag": "#MiniDogeMagic",
+    #     "last_sale_timestamp_file": "last_mini_sale_timestamp.txt"
     # }
 }
 
-async def load_last_sale_timestamp(collection):
-    try:
-        async with db_pool.acquire() as conn:
-            result = await conn.fetchrow(
-                "SELECT last_sale_timestamp FROM sale_timestamps WHERE collection = $1",
-                collection
-            )
-            if result and result["last_sale_timestamp"]:
-                return result["last_sale_timestamp"]
-            return datetime.min.replace(tzinfo=timezone.utc)
-    except Exception as e:
-        print(f"Error loading last sale timestamp for {collection}: {e}")
-        return datetime.min.replace(tzinfo=timezone.utc)
+def load_last_sale_timestamp(collection):
+    file_path = COLLECTIONS[collection]["last_sale_timestamp_file"]
+    if os.path.exists(file_path):
+        with open(file_path, "r") as f:
+            timestamp_str = f.read().strip()
+            if timestamp_str:
+                return datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+    return datetime.min.replace(tzinfo=timezone.utc)
 
-async def save_last_sale_timestamp(collection, timestamp):
-    try:
-        async with db_pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO sale_timestamps (collection, last_sale_timestamp)
-                VALUES ($1, $2)
-                ON CONFLICT (collection)
-                DO UPDATE SET last_sale_timestamp = $2
-                """,
-                collection, timestamp
-            )
-            print(f"Saved last sale timestamp for {collection}: {timestamp}")
-    except Exception as e:
-        print(f"Error saving last sale timestamp for {collection}: {e}")
+def save_last_sale_timestamp(collection, timestamp):
+    with open(COLLECTIONS[collection]["last_sale_timestamp_file"], "w") as f:
+        f.write(timestamp.isoformat())
 
 async def fetch_sales(collection):
     api_url = COLLECTIONS[collection]["api_url"]
@@ -91,6 +62,7 @@ async def fetch_sales(collection):
         return []
 
 def create_sale_message(collection):
+    # List of varied emojis for sale announcements
     emojis = ["🔥", "🚀", "💥", "🌟", "⚡"]
     emoji = random.choice(emojis)
     return f"🐶 **{collection.upper()} ALERT! Fresh Sale on Doginals! {emoji}**"
@@ -102,13 +74,17 @@ async def post_sale_to_discord(channel, collection, sale):
     sale_timestamp_str = sale.get("date", "1970-01-01T00:00:00.000Z")
     sale_timestamp = datetime.fromisoformat(sale_timestamp_str.replace("Z", "+00:00"))
 
+    # Shorten addresses for privacy (first 4 + last 4 chars)
     seller = sale.get("sellerAddress", "Myst")[:4] + "..." + sale.get("sellerAddress", "Myst")[-4:]
     buyer = sale.get("buyerAddress", "NewP")[:4] + "..." + sale.get("buyerAddress", "NewP")[-4:]
 
     message = create_sale_message(collection)
+
+    # Construct URLs
     image_url = f"https://cdn.doggy.market/content/{sale_id}"
     sale_url = f"https://doggy.market/inscription/{sale_id}"
 
+    # Create embed
     embed = discord.Embed(
         title=f"{collection.capitalize()} #{sale.get('itemId', '???')}",
         url=sale_url,
@@ -117,8 +93,9 @@ async def post_sale_to_discord(channel, collection, sale):
     )
     embed.add_field(name="💰 Sold for", value=f"{price_doge:.2f} Doge", inline=True)
     embed.add_field(name="Inscription Number", value=str(sale.get("inscriptionNumber", "N/A")), inline=True)
-    embed.add_field(name="Buyer", value=buyer, inline=True)
-    embed.add_field(name="Seller", value=seller, inline=True)
+    embed.add_field(name="Buyer", value=buyer, inline=True)  # Same row
+    embed.add_field(name="Seller", value=seller, inline=True)  # Same row
+
     embed.set_thumbnail(url=image_url)
     embed.set_footer(text=f"Sold on {sale_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')} | {COLLECTIONS[collection]['hashtag']} ✅")
 
@@ -134,7 +111,7 @@ async def check_sales():
             print(f"Error: Channel with ID {COLLECTIONS[collection]['channel_id']} not found or bot lacks permission for {collection}.")
             continue
 
-        last_sale_timestamp = await load_last_sale_timestamp(collection)
+        last_sale_timestamp = load_last_sale_timestamp(collection)
         print(f"Current time: {datetime.now(timezone.utc)}, Last sale timestamp for {collection}: {last_sale_timestamp}")
 
         sales = await fetch_sales(collection)
@@ -143,6 +120,7 @@ async def check_sales():
         new_last_sale_timestamp = last_sale_timestamp
         current_time = datetime.now(timezone.utc)
 
+        # Count skipped sales for summary
         skipped_older = 0
         skipped_processed = 0
 
@@ -165,13 +143,14 @@ async def check_sales():
             if new_sale_timestamp > new_last_sale_timestamp:
                 new_last_sale_timestamp = new_sale_timestamp
 
+        # Log summary of skipped sales
         if skipped_older > 0:
             print(f"Skipped {skipped_older} sales for {collection}: older than 24 hours")
         if skipped_processed > 0:
             print(f"Skipped {skipped_processed} sales for {collection}: already processed")
 
         if new_last_sale_timestamp != last_sale_timestamp:
-            await save_last_sale_timestamp(collection, new_last_sale_timestamp)
+            save_last_sale_timestamp(collection, new_last_sale_timestamp)
             print(f"Updated last_sale_timestamp for {collection} to: {new_last_sale_timestamp}")
         else:
             print(f"No new sales to process for {collection}.")
@@ -179,7 +158,6 @@ async def check_sales():
 @bot.event
 async def on_ready():
     print(f"Bot is ready as {bot.user}")
-    await init_db_pool()  # Initialize the database connection
     check_sales.start()
 
 @bot.command()
