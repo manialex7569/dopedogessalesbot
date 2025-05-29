@@ -33,7 +33,7 @@ COLLECTIONS = {
 }
 
 def load_last_sale_timestamp(collection):
-    file_path = COLLECTIONS[collection]["last_sale_timestamp_file"]
+    file_path = os.path.join("/app/storage", COLLECTIONS[collection]["last_sale_timestamp_file"])
     if os.path.exists(file_path):
         with open(file_path, "r") as f:
             timestamp_str = f.read().strip()
@@ -42,7 +42,8 @@ def load_last_sale_timestamp(collection):
     return datetime.min.replace(tzinfo=timezone.utc)
 
 def save_last_sale_timestamp(collection, timestamp):
-    with open(COLLECTIONS[collection]["last_sale_timestamp_file"], "w") as f:
+    file_path = os.path.join("/app/storage", COLLECTIONS[collection]["last_sale_timestamp_file"])
+    with open(file_path, "w") as f:
         f.write(timestamp.isoformat())
 
 async def fetch_sales(collection):
